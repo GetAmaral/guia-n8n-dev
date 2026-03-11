@@ -43,48 +43,20 @@ Essa URL vai para o frontend developer configurar no simulador.
 
 ---
 
-## Passo 3: Adicionar node Code (normalizar input)
+## Passo 3: ~~Normalize Webhook Input~~ — NAO E MAIS NECESSARIO
 
-O `whatsAppTrigger` nativo extrai automaticamente o conteudo do array. O Webhook generico recebe o array raw. Precisamos de um node intermediario:
+O frontend foi corrigido para enviar o payload como **objeto** (nao array). Isso significa que o Webhook generico entrega `$json.messages`, `$json.contacts`, etc. diretamente — identico ao output do `whatsAppTrigger` nativo.
 
-1. Adicionar node **Code** logo depois do Webhook
-2. Nome: `Normalize Webhook Input`
-3. Codigo:
-
-```javascript
-// O simulador envia array (como Meta), extrair primeiro elemento
-const input = $input.all();
-const raw = input[0].json;
-
-// Se veio como array (body e array), pegar primeiro item
-// Se veio como objeto com body array, extrair
-let payload;
-
-if (Array.isArray(raw.body)) {
-    payload = raw.body[0];
-} else if (Array.isArray(raw)) {
-    payload = raw[0];
-} else if (raw.messaging_product) {
-    payload = raw;
-} else if (raw.body && raw.body.messaging_product) {
-    payload = raw.body;
-} else {
-    payload = raw;
-}
-
-return [{ json: payload }];
-```
-
-> Isso garante que o output tenha o formato identico ao que o `whatsAppTrigger` nativo entrega: um objeto com `messaging_product`, `metadata`, `contacts`, `messages`, `field`.
+**Se voce ja adicionou o node `Normalize Webhook Input`, pode deletar.** Conecte o Webhook direto no `Edit Fields`.
 
 ---
 
-## Passo 4: Copiar nodes de processamento da producao
+## Passo 3 (atualizado): Copiar nodes de processamento da producao
 
-A partir daqui, copiar os nodes da producao **na ordem exata**:
+Conectar o Webhook direto nos nodes copiados:
 
 ```
-trigger-whatsapp → Normalize Webhook Input → Edit Fields → If1 → BotGuard Normalize → ...
+trigger-whatsapp (Webhook) → Edit Fields → If1 → BotGuard Normalize → ...
 ```
 
 **Nodes a copiar do workflow de producao (nesta ordem):**
@@ -369,9 +341,6 @@ Simulador (Analise Total)
 Webhook generico (N8N dev: trigger-whatsapp)
     │
     ▼
-Normalize Webhook Input (Code node - unwrap array)
-    │
-    ▼
 Edit Fields (extrai messageSet)
     │
     ▼
@@ -450,9 +419,8 @@ Estas expressoes sao usadas no workflow de producao e DEVEM funcionar identicame
 
 - [ ] Criar workflow "Dev - Total Assistente"
 - [ ] Adicionar node Webhook (nome: `trigger-whatsapp`, path: `whatsapp-dev`)
-- [ ] Adicionar node Code "Normalize Webhook Input"
 - [ ] Copiar nodes de processamento da producao
-- [ ] Conectar `Normalize Webhook Input` → `Edit Fields`
+- [ ] Conectar `trigger-whatsapp` (Webhook) → `Edit Fields` diretamente
 - [ ] Atualizar credenciais Supabase para dev (se aplicavel)
 - [ ] Substituir nodes de envio WhatsApp por gravacao em `resposta_ia`
 - [ ] Ativar workflow

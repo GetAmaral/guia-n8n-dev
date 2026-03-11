@@ -113,28 +113,30 @@ function buildPayload(profile, type, content) {
             break;
     }
 
-    // Retorna ARRAY — exatamente como Meta envia
-    return [
-        {
-            messaging_product: "whatsapp",
-            metadata: {
-                display_phone_number: "554384983452",
-                phone_number_id: "744582292082931"
-            },
-            contacts: [
-                {
-                    profile: { name: profile.name },
-                    wa_id: profile.phone
-                }
-            ],
-            messages: [messageBase],
-            field: "messages"
-        }
-    ];
+    // Retorna OBJETO (nao array!) — o whatsAppTrigger nativo da Meta faz unwrap
+    // automatico do array antes de passar pro proximo node. Para o Webhook generico
+    // do N8N dev receber identico, enviamos o objeto direto.
+    return {
+        messaging_product: "whatsapp",
+        metadata: {
+            display_phone_number: "554384983452",
+            phone_number_id: "744582292082931"
+        },
+        contacts: [
+            {
+                profile: { name: profile.name },
+                wa_id: profile.phone
+            }
+        ],
+        messages: [messageBase],
+        field: "messages"
+    };
 }
 ```
 
-> **IMPORTANTE:** Os valores `display_phone_number` e `phone_number_id` sao os mesmos da producao para que o workflow funcione identico.
+> **IMPORTANTE:** Enviamos como OBJETO (nao array). Na producao, a Meta envia array, mas o node `whatsAppTrigger` do N8N faz unwrap automatico. Como no dev usamos Webhook generico, enviamos ja como objeto para que `$json.messages`, `$json.contacts` etc. fiquem acessiveis diretamente — identico ao output do whatsAppTrigger nativo.
+>
+> Os valores `display_phone_number` e `phone_number_id` sao os mesmos da producao.
 
 ---
 
