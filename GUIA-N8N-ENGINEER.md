@@ -120,32 +120,127 @@ Cada node copiado que usa credenciais precisa ser atualizado:
 
 ## Passo 6: Substituir envio WhatsApp por gravacao no Supabase
 
-Na producao, a resposta da IA e enviada via WhatsApp API. No dev, a resposta deve voltar para o chat do simulador. O simulador monitora a tabela `resposta_ia` via Supabase realtime.
+### O problema
 
-**Em CADA node que envia mensagem WhatsApp**, substituir por um node **Supabase → Insert a Row**:
+Na producao existem **12 nodes** que enviam mensagens via WhatsApp API. No dev nao tem WhatsApp real — esses nodes vao falhar. Cada um precisa ser substituido por uma gravacao no Supabase, que o simulador captura via Realtime.
+
+```
+PRODUCAO:  N8N → WhatsApp API (graph.facebook.com) → celular do usuario
+DEV:       N8N → INSERT na tabela resposta_ia (Supabase) → simulador captura via Realtime
+```
+
+### Lista completa dos 12 nodes a substituir
+
+#### Nodes nativos WhatsApp (8 nodes)
+
+| # | Node | Texto que envia | Node anterior |
+|---|------|----------------|---------------|
+| 1 | `Send message3` | "Detectei muitas mensagens em pouco tempo..." | `Blocked?` |
+| 2 | `Send message2` | Transcricao de audio: `$json.text` | `Transcribe a recording` |
+| 3 | `Send message4` | "Ola! Para ativar sua conta, digite seu email" | `Switch` (branch 2) |
+| 4 | `Send message6` | "Foi enviado um codigo de verificacao..." | `HTTP Request1` |
+| 5 | `Send message7` | "Digite o seu email correto." | `Switch1` / `Switch2` |
+| 6 | `Send message8` | "Codigo incorreto ou expirado." | `Switch2` (branch 3) |
+| 7 | `Send message9` | "Conta ativa com sucesso!" | `Update a row2` |
+| 8 | `Send message10` | "Conta ativa com sucesso!" | `Create a row2` |
+
+#### Nodes HTTP Request para graph.facebook.com (4 nodes)
+
+| # | Node | O que envia | Node anterior |
+|---|------|-------------|---------------|
+| 9 | `HTTP Request — send agenda template1` | Template `lembretes_diarios` | `Edit Fields2` |
+| 10 | `HTTP Request — send agenda text` | Texto da agenda | `HTTP Request — send agenda template1` |
+| 11 | `HTTP Request — send agenda template` | Template `email_confirmacao` | `Switch` (branch 3) |
+| 12 | `HTTP Request — send agenda template2` | Template `plano_inativo` | `If9` (branch 2) |
+
+### Como substituir cada node
+
+**Opcao A (recomendada): Criar 1 sub-workflow reutilizavel**
+
+Criar um sub-workflow chamado **"Dev — Enviar Resposta"** com:
+
+1. Node **Webhook** (trigger) — recebe a mensagem a enviar
+2. Node **Supabase → Insert a Row**:
 
 | Campo | Valor |
 |-------|-------|
 | **Table** | `resposta_ia` |
-| **Campos:** | |
-| `mensagem` | `={{ $json.textBody }}` ou o texto da resposta da IA |
+| `mensagem` | `={{ $json.mensagem }}` |
 | `created_at` | `={{ new Date().toISOString() }}` |
 
-Ou, se preferir manter os nodes de envio WhatsApp para referencia futura, adicionar um **node Code** ANTES deles que grava no Supabase:
+Entao, no workflow principal, substituir cada um dos 12 nodes por um **Execute Workflow** apontando para esse sub-workflow, passando:
 
-```javascript
-// Gravar resposta no Supabase para o simulador capturar
-const resposta = $json.textBody || $json.text || $json.body || 'Resposta processada';
-
-return [{
-    json: {
-        ...$json,
-        _dev_response: resposta
-    }
-}];
+```json
+{ "mensagem": "texto que seria enviado pelo WhatsApp" }
 ```
 
-E conectar a um **Supabase Insert** node em paralelo ao send WhatsApp.
+**Opcao B (mais simples): Substituir node a node**
+
+Para cada um dos 12 nodes, deletar o node WhatsApp e colocar no lugar um **Supabase → Insert a Row**:
+
+| Campo | Valor |
+|-------|-------|
+| **Table** | `resposta_ia` |
+| `mensagem` | (copiar o texto que o node original enviava — ver tabela acima) |
+| `created_at` | `={{ new Date().toISOString() }}` |
+
+**Exemplo concreto — substituir `Send message4`:**
+
+O original envia:
+```
+Olá! Tudo bem com você?
+Para ativar sua conta, preciso que você digite seu *email*.
+
+_Digite apenas o email de sua conta_
+```
+
+O substituto (Supabase Insert):
+| Campo | Valor |
+|-------|-------|
+| Table | `resposta_ia` |
+| `mensagem` | `=Olá! Tudo bem com você?\nPara ativar sua conta, preciso que você digite seu *email*.\n\n_Digite apenas o email de sua conta_` |
+| `created_at` | `={{ new Date().toISOString() }}` |
+
+**Exemplo concreto — substituir `Send message2` (transcricao de audio):**
+
+O original envia o texto transcrito dinamicamente. O substituto:
+| Campo | Valor |
+|-------|-------|
+| Table | `resposta_ia` |
+| `mensagem` | `={{ "_" + $json.text + "_\n— Transcrito por *Total Assistente*, sua IA pessoal" }}` |
+| `created_at` | `={{ new Date().toISOString() }}` |
+
+**Exemplo concreto — substituir HTTP Request templates:**
+
+Templates nao tem texto dinamico visivel. Substituir por texto fixo descritivo:
+| Campo | Valor |
+|-------|-------|
+| Table | `resposta_ia` |
+| `mensagem` | `=[Template: lembretes_diarios] Lembrete enviado para {{ $('trigger-whatsapp').item.json.contacts[0].profile.name }}` |
+| `created_at` | `={{ new Date().toISOString() }}` |
+
+### Fluxo da resposta no dev
+
+```
+N8N dev processa mensagem
+    │
+    ▼
+Onde teria "Send message" ou "HTTP Request graph.facebook.com"
+    │
+    ▼
+Supabase INSERT na tabela resposta_ia
+    │
+    ▼
+Supabase dispara evento postgres_changes (Realtime)
+    │
+    ▼
+Simulador (ChatTotal) recebe via subscription no canal 'chat_realtime'
+    │
+    ▼
+Mensagem aparece no chat como resposta da IA
+```
+
+> **IMPORTANTE:** O simulador ja escuta a tabela `resposta_ia` via Supabase Realtime (app.js linha 755). Nao precisa mudar NADA no frontend para a resposta funcionar. So precisa garantir que o N8N dev grava nessa tabela.
 
 ---
 
