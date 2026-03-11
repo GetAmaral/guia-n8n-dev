@@ -25,38 +25,67 @@ O node `whatsAppTrigger` do N8N valida OAuth com a Meta. Como estamos simulando,
 | Campo | Valor |
 |-------|-------|
 | **Node type** | `Webhook` |
-| **Node name** | `trigger-whatsapp` (MESMO NOME da producao!) |
+| **Node name** | `webhook-receiver` (NAO use `trigger-whatsapp` aqui!) |
 | **HTTP Method** | POST |
-| **Path** | `whatsapp-dev` |
+| **Path** | `dev-whatsapp` |
 | **Authentication** | None |
 | **Response Mode** | Last Node |
 | **Response Code** | 200 |
 
-> **CRITICO:** O nome do node DEVE ser `trigger-whatsapp` porque todo o workflow referencia `$('trigger-whatsapp')` para extrair dados. Se o nome for diferente, todas as expressoes quebram.
-
-**Depois de salvar**, copiar a URL do webhook. Sera algo como:
+**Depois de salvar**, copiar a URL do webhook:
 ```
-http://76.13.172.17:5678/webhook/whatsapp-dev
+http://76.13.172.17:5678/webhook/dev-whatsapp
 ```
 
 Essa URL vai para o frontend developer configurar no simulador.
 
 ---
 
-## Passo 3: ~~Normalize Webhook Input~~ — NAO E MAIS NECESSARIO
+## Passo 3: Adicionar node Code normalizador (OBRIGATORIO)
 
-O frontend foi corrigido para enviar o payload como **objeto** (nao array). Isso significa que o Webhook generico entrega `$json.messages`, `$json.contacts`, etc. diretamente — identico ao output do `whatsAppTrigger` nativo.
+O Webhook generico do N8N wrapa o POST body dentro de `$json.body`, junto com `headers`, `params`, `query`. Mas todas as expressoes do workflow referenciam `$('trigger-whatsapp').item.json.messages[0]...` — sem o `.body`.
 
-**Se voce ja adicionou o node `Normalize Webhook Input`, pode deletar.** Conecte o Webhook direto no `Edit Fields`.
+A solucao: criar um node **Code** que extrai `body` e nomea-lo `trigger-whatsapp`. Assim TODAS as expressoes funcionam sem alteracao.
+
+| Campo | Valor |
+|-------|-------|
+| **Node type** | `Code` (JavaScript) |
+| **Node name** | `trigger-whatsapp` (**ESTE e o node que deve ter esse nome!**) |
+
+**Codigo:**
+
+```javascript
+const raw = $input.first().json;
+const payload = raw.body || raw;
+return [{ json: payload }];
+```
+
+> **POR QUE ISSO FUNCIONA:** Dezenas de nodes no workflow usam `$('trigger-whatsapp').item.json.messages[0]`, `$('trigger-whatsapp').item.json.contacts[0].wa_id`, etc. Ao nomear o normalizador como `trigger-whatsapp`, essas expressoes apontam para o output do normalizador — que entrega os dados no formato correto (sem wrapper `body`).
+
+**Conexao:**
+```
+webhook-receiver (Webhook) → trigger-whatsapp (Code normalizador)
+```
+
+**Output do normalizador (identico ao whatsAppTrigger nativo):**
+```json
+{
+  "messaging_product": "whatsapp",
+  "metadata": { "display_phone_number": "554384983452", "phone_number_id": "744582292082931" },
+  "contacts": [{ "profile": { "name": "Luiz Felipe" }, "wa_id": "554391936205" }],
+  "messages": [{ "from": "554391936205", "type": "text", "text": { "body": "oi" }, ... }],
+  "field": "messages"
+}
+```
 
 ---
 
-## Passo 3 (atualizado): Copiar nodes de processamento da producao
+## Passo 4: Copiar nodes de processamento da producao
 
-Conectar o Webhook direto nos nodes copiados:
+Conectar o normalizador nos nodes copiados:
 
 ```
-trigger-whatsapp (Webhook) → Edit Fields → If1 → BotGuard Normalize → ...
+webhook-receiver → trigger-whatsapp (normalizador) → Check Message Age → If4 → Edit Fields → ...
 ```
 
 **Nodes a copiar do workflow de producao (nesta ordem):**
@@ -338,7 +367,16 @@ Simulador (Analise Total)
     │
     │  POST payload Meta-identico
     ▼
-Webhook generico (N8N dev: trigger-whatsapp)
+webhook-receiver (Webhook generico)
+    │
+    ▼
+trigger-whatsapp (Code normalizador — extrai body)
+    │
+    ▼
+Check Message Age
+    │
+    ▼
+If4 (messages existe?)
     │
     ▼
 Edit Fields (extrai messageSet)
@@ -418,9 +456,10 @@ Estas expressoes sao usadas no workflow de producao e DEVEM funcionar identicame
 ## Checklist
 
 - [ ] Criar workflow "Dev - Total Assistente"
-- [ ] Adicionar node Webhook (nome: `trigger-whatsapp`, path: `whatsapp-dev`)
-- [ ] Copiar nodes de processamento da producao
-- [ ] Conectar `trigger-whatsapp` (Webhook) → `Edit Fields` diretamente
+- [ ] Adicionar node Webhook (nome: `webhook-receiver`, path: `dev-whatsapp`)
+- [ ] Adicionar node Code normalizador (nome: `trigger-whatsapp`) com `raw.body || raw`
+- [ ] Conectar: `webhook-receiver` → `trigger-whatsapp` → `Check Message Age` → `If4` → `Edit Fields`
+- [ ] Copiar demais nodes de processamento da producao
 - [ ] Atualizar credenciais Supabase para dev (se aplicavel)
 - [ ] Substituir nodes de envio WhatsApp por gravacao em `resposta_ia`
 - [ ] Ativar workflow
